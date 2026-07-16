@@ -25,6 +25,16 @@ impl<'a> From<(&'a str, &'a Proxy)> for ProxyItem {
 }
 
 impl ProxyItem {
+    pub(super) fn unknown(name: &str) -> Self {
+        Self {
+            name: name.to_owned(),
+            proxy_type: ProxyType::Unknown,
+            history: None,
+            udp: None,
+            now: None,
+        }
+    }
+
     pub fn proxy_type(&self) -> ProxyType {
         self.proxy_type
     }

@@ -10,7 +10,7 @@ use tui::{
 use crate::{
     components::{Footer, FooterItem, MovableListManage, ProxyGroup, ProxyItem},
     interactive::{EndlessSelf, ProxySort, Sortable},
-    ui::{help_footer, tagged_footer, Action, Coord, ListEvent, Wrap},
+    ui::{Action, Coord, ListEvent, Wrap, help_footer, tagged_footer},
 };
 
 // TODO Proxy tree furthur functions
@@ -147,7 +147,11 @@ impl<'a> ProxyTree<'a> {
 
             footer.push_left(tagged_footer("Sort", style, self.sort_method).into());
 
-            if let Some(ref now) = current_group.members[current_group.cursor].now {
+            if let Some(now) = current_group
+                .members
+                .get(current_group.cursor)
+                .and_then(|member| member.now.as_ref())
+            {
                 footer.push_right(FooterItem::span(Span::raw(now.to_owned())).wrapped());
             }
         }
@@ -192,29 +196,20 @@ impl<'a> From<Proxies> for ProxyTree<'a> {
             ..Default::default()
         };
         for (name, group) in val.groups() {
-            let all = group
-                .all
-                .as_ref()
-                .expect("ProxyGroup should have member vec");
+            let all = group.all.as_deref().unwrap_or_default();
             let mut members = Vec::with_capacity(all.len());
-            for x in all.iter() {
-                let member = (
-                    x.as_str(),
-                    val.get(x)
-                        .to_owned()
-                        .expect("Group member should be in all proxies"),
-                )
-                    .into();
+            for x in all {
+                let member = val
+                    .get(x)
+                    .map(|proxy| (x.as_str(), proxy).into())
+                    .unwrap_or_else(|| ProxyItem::unknown(x));
                 members.push(member);
             }
 
-            // if group.now.is_some then it must be in all proxies
-            // So use map & expect instead of Option#and_then
-            let current = group.now.as_ref().map(|name| {
+            let current = group.now.as_ref().and_then(|name| {
                 members
                     .iter()
                     .position(|item: &ProxyItem| &item.name == name)
-                    .expect("Group member should be in all proxies")
             });
 
             ret.groups.push(ProxyGroup {
@@ -300,11 +295,12 @@ impl<'a> MovableListManage for ProxyTree<'a> {
                 }
                 KeyCode::Right | KeyCode::Enter => {
                     if group.proxy_type.is_selector() {
-                        let current = group.members[group.cursor].name.to_owned();
-                        return Some(Action::ApplySelection {
-                            group: group.name.to_owned(),
-                            proxy: current,
-                        });
+                        if let Some(current) = group.members.get(group.cursor) {
+                            return Some(Action::ApplySelection {
+                                group: group.name.to_owned(),
+                                proxy: current.name.to_owned(),
+                            });
+                        }
                     }
                 }
                 _ => {}
@@ -335,5 +331,84 @@ impl<'a> MovableListManage for ProxyTree<'a> {
             y: 0,
             hold: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use clashctl_core::model::{Proxy, ProxyType};
+
+    use super::*;
+
+    fn proxy(proxy_type: ProxyType, all: Option<Vec<&str>>, now: Option<&str>) -> Proxy {
+        Proxy {
+            proxy_type,
+            history: vec![],
+            udp: None,
+            all: all.map(|members| members.into_iter().map(str::to_owned).collect()),
+            now: now.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn missing_group_member_is_kept_as_unknown() {
+        let proxies = Proxies {
+            proxies: HashMap::from([
+                (
+                    "group".to_owned(),
+                    proxy(
+                        ProxyType::Selector,
+                        Some(vec!["available", "missing"]),
+                        Some("missing"),
+                    ),
+                ),
+                (
+                    "available".to_owned(),
+                    proxy(ProxyType::Shadowsocks, None, None),
+                ),
+            ]),
+        };
+
+        let mut tree = ProxyTree::from(proxies);
+        MovableListManage::sort(&mut tree);
+
+        let group = tree
+            .groups
+            .iter()
+            .find(|group| group.name == "group")
+            .unwrap();
+        let missing = group
+            .members
+            .iter()
+            .find(|member| member.name == "missing")
+            .unwrap();
+        assert_eq!(missing.proxy_type, ProxyType::Unknown);
+        assert_eq!(
+            group
+                .current
+                .map(|index| group.members[index].name.as_str()),
+            Some("missing")
+        );
+    }
+
+    #[test]
+    fn group_without_members_can_be_sorted_and_expanded() {
+        let proxies = Proxies {
+            proxies: HashMap::from([(
+                "empty".to_owned(),
+                proxy(ProxyType::Selector, None, Some("missing")),
+            )]),
+        };
+
+        let mut tree = ProxyTree::from(proxies);
+        MovableListManage::sort(&mut tree);
+        tree.expanded = true;
+        tree.update_footer();
+
+        assert!(tree.groups[0].members.is_empty());
+        assert_eq!(tree.groups[0].current, None);
+        assert_eq!(tree.groups[0].cursor, 0);
     }
 }

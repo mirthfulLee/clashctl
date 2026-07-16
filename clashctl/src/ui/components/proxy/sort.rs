@@ -40,6 +40,12 @@ impl<'a> Sortable<'a, ProxySort> for ProxyGroup<'a> {
     type Item<'b> = ProxyItem;
 
     fn sort_with(&mut self, method: &ProxySort) {
+        if self.members.is_empty() {
+            self.cursor = 0;
+            self.current = None;
+            return;
+        }
+
         let pointed = &self.members[self.cursor].name.clone();
         let current = self.current.map(|x| self.members[x].name.clone());
         self.members.sort_by(|a, b| method.sort_fn(a, b));

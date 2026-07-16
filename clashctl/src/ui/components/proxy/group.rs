@@ -68,7 +68,12 @@ impl<'a> ProxyGroup<'a> {
         let count = self.members.len();
         let proxy_count = Span::styled(
             if matches!(status, ProxyGroupFocusStatus::Expanded) {
-                format!("{}/{}", self.cursor + 1, count)
+                let position = if self.members.is_empty() {
+                    0
+                } else {
+                    self.cursor + 1
+                };
+                format!("{}/{}", position, count)
             } else {
                 count.to_string()
             },
