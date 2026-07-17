@@ -165,4 +165,7 @@ fn test_proxy_type() {
     let string = "direct";
     let parsed = string.parse().unwrap();
     assert_eq!(ProxyType::Direct, parsed);
+
+    let anytls = "anytls".parse().unwrap();
+    assert_eq!(ProxyType::AnyTLS, anytls);
 }

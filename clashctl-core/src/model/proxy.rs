@@ -76,6 +76,7 @@ pub enum ProxyType {
     Snell,
     Trojan,
     Socks5,
+    AnyTLS,
     // Relay
     Relay,
     // Unknown
@@ -113,8 +114,30 @@ impl ProxyType {
                 | ProxyType::Snell
                 | ProxyType::Trojan
                 | ProxyType::Socks5
+                | ProxyType::AnyTLS
         )
     }
+}
+
+#[test]
+fn test_anytls_proxy_type() {
+    let proxy: Proxy = serde_json::from_str(
+        r#"{
+            "type": "AnyTLS",
+            "history": [],
+            "udp": true,
+            "all": null,
+            "now": null
+        }"#,
+    )
+    .unwrap();
+
+    assert_eq!(proxy.proxy_type, ProxyType::AnyTLS);
+    assert!(proxy.proxy_type.is_normal());
+    assert_eq!(
+        serde_json::to_string(&proxy.proxy_type).unwrap(),
+        r#""AnyTLS""#
+    );
 }
 
 #[test]
