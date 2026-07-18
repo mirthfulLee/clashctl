@@ -17,6 +17,7 @@ use crate::{
 #[non_exhaustive]
 pub enum Event {
     Quit,
+    Failure(String),
     Action(Action),
     Input(InputEvent),
     Update(UpdateEvent),
@@ -27,6 +28,10 @@ impl<'a> MovableListItem<'a> for Event {
     fn to_spans(&self) -> Spans<'a> {
         match self {
             Event::Quit => Spans(vec![]),
+            Event::Failure(message) => Spans(vec![
+                Span::styled("!  ", Style::default().fg(Color::Red)),
+                Span::raw(message.to_owned()),
+            ]),
             Event::Action(action) => Spans(vec![
                 Span::styled("⋉ ", Style::default().fg(Color::Yellow)),
                 Span::raw(format!("{:?}", action)),

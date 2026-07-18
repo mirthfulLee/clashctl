@@ -6,6 +6,18 @@ pub enum TuiError {
     #[error("Clashctl error: {0}")]
     ClashCtl(#[from] crate::clashctl::Error),
 
+    #[error("Clash/Mihomo API `{endpoint}` failed: {source}")]
+    ApiEndpoint {
+        endpoint: &'static str,
+        source: crate::clashctl::Error,
+    },
+
+    #[error("Clash/Mihomo API `{0}` stream ended unexpectedly")]
+    ApiStreamEnded(&'static str),
+
+    #[error("{0}")]
+    BackgroundError(String),
+
     #[error("TUI error")]
     TuiError(#[from] std::io::Error),
 

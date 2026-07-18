@@ -133,9 +133,14 @@ pub fn main_loop(opt: TuiOpt, flag: Flags) -> TuiResult<()> {
             match servo.join() {
                 Err(_) => {
                     warn!("Servo panicked");
+                    error
+                        .lock()
+                        .unwrap()
+                        .replace(crate::ui::TuiError::TuiBackendErr);
                 }
                 Ok(Err(e)) => {
                     warn!("TUI error ({e})");
+                    error.lock().unwrap().replace(e);
                 }
                 _ => {}
             }

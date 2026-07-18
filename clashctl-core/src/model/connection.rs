@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use super::deserialize_null_default;
 use crate::model::{RuleType, TimeType};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -35,6 +36,7 @@ pub struct Connection {
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "camelCase")]
 pub struct Connections {
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub connections: Vec<Connection>,
     pub download_total: u64,
     pub upload_total: u64,
@@ -127,4 +129,21 @@ mod deserialize {
             val.connection
         }
     }
+}
+
+#[test]
+fn null_connections_are_treated_as_empty() {
+    let connections: Connections = serde_json::from_str(
+        r#"{
+            "downloadTotal": 12603443,
+            "uploadTotal": 42253,
+            "connections": null,
+            "memory": 0
+        }"#,
+    )
+    .unwrap();
+
+    assert!(connections.connections.is_empty());
+    assert_eq!(connections.download_total, 12603443);
+    assert_eq!(connections.upload_total, 42253);
 }

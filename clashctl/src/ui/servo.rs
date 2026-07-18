@@ -14,7 +14,7 @@ use crate::{
     ui::{
         event::{Event, UpdateEvent},
         utils::{Interval, Pulse},
-        Action, TuiOpt, TuiResult,
+        Action, TuiError, TuiOpt, TuiResult,
     },
 };
 
@@ -22,22 +22,40 @@ pub type Job = JoinHandle<TuiResult<()>>;
 
 pub fn servo(tx: Sender<Event>, rx: Receiver<Action>, opt: TuiOpt, flags: Flags) -> TuiResult<()> {
     let clash = flags.connect_server_from_config()?;
-    clash.get_version()?;
+    api_result("/version", clash.get_version())?;
 
     scope(|r| -> TuiResult<()> {
         let tx_clone = tx.clone();
-        let handle1 = r.spawn(|| input_job(tx_clone));
+        let error_tx = tx.clone();
+        let handle1 = r.spawn(move || report_job_error(&error_tx, input_job(tx_clone)));
 
         let tx_clone = tx.clone();
-        let handle2 = r.spawn(|| traffic_job(tx_clone, &clash));
+        let error_tx = tx.clone();
+        let clash_ref = &clash;
+        let handle2 =
+            r.spawn(move || report_job_error(&error_tx, traffic_job(tx_clone, clash_ref)));
 
         let tx_clone = tx.clone();
-        let handle3 = r.spawn(|| log_job(tx_clone, &clash));
+        let error_tx = tx.clone();
+        let clash_ref = &clash;
+        let handle3 = r.spawn(move || report_job_error(&error_tx, log_job(tx_clone, clash_ref)));
 
         let tx_clone = tx.clone();
-        let handle4 = r.spawn(|| req_job(&opt, &flags, tx_clone, &clash));
+        let error_tx = tx.clone();
+        let clash_ref = &clash;
+        let opt_ref = &opt;
+        let flags_ref = &flags;
+        let handle4 = r.spawn(move || {
+            report_job_error(&error_tx, req_job(opt_ref, flags_ref, tx_clone, clash_ref))
+        });
 
-        let handle5 = r.spawn(|| action_job(&opt, &flags, tx, rx, &clash));
+        let error_tx = tx.clone();
+        let clash_ref = &clash;
+        let opt_ref = &opt;
+        let flags_ref = &flags;
+        let handle5 = r.spawn(move || {
+            report_job_error(&error_tx, action_job(opt_ref, flags_ref, tx, rx, clash_ref))
+        });
 
         handle1.join().unwrap()?;
         handle2.join().unwrap()?;
@@ -73,44 +91,56 @@ fn req_job(_opt: &TuiOpt, _flags: &Flags, tx: Sender<Event>, clash: &Clash) -> T
 
     loop {
         if version_pulse.tick() {
-            tx.send(Event::Update(UpdateEvent::Version(clash.get_version()?)))?;
+            tx.send(Event::Update(UpdateEvent::Version(api_result(
+                "/version",
+                clash.get_version(),
+            )?)))?;
         }
         if connection_pulse.tick() {
             tx.send(Event::Update(UpdateEvent::Connection(
-                clash.get_connections()?.into(),
+                api_result("/connections", clash.get_connections())?.into(),
             )))?;
         }
         if rules_pulse.tick() {
-            tx.send(Event::Update(UpdateEvent::Rules(clash.get_rules()?)))?;
+            tx.send(Event::Update(UpdateEvent::Rules(api_result(
+                "/rules",
+                clash.get_rules(),
+            )?)))?;
         }
         if proxies_pulse.tick() {
-            tx.send(Event::Update(UpdateEvent::Proxies(clash.get_proxies()?)))?;
+            tx.send(Event::Update(UpdateEvent::Proxies(api_result(
+                "/proxies",
+                clash.get_proxies(),
+            )?)))?;
         }
         if config_pulse.tick() {
-            tx.send(Event::Update(UpdateEvent::Config(clash.get_configs()?)))?;
+            tx.send(Event::Update(UpdateEvent::Config(api_result(
+                "/configs",
+                clash.get_configs(),
+            )?)))?;
         }
         interval.tick();
     }
 }
 
 fn traffic_job(tx: Sender<Event>, clash: &Clash) -> TuiResult<()> {
-    let mut traffics = clash.get_traffic()?;
+    let mut traffics = api_result("/traffic", clash.get_traffic())?;
     loop {
         match traffics.next() {
             Some(Ok(traffic)) => tx.send(Event::Update(UpdateEvent::Traffic(traffic)))?,
-            Some(Err(e)) => warn!("{:?}", e),
-            None => warn!("No more traffic"),
+            Some(Err(e)) => return Err(api_error("/traffic", e)),
+            None => return Err(TuiError::ApiStreamEnded("/traffic")),
         }
     }
 }
 
 fn log_job(tx: Sender<Event>, clash: &Clash) -> TuiResult<()> {
+    let mut logs = api_result("/logs", clash.get_log())?;
     loop {
-        let mut logs = clash.get_log()?;
         match logs.next() {
             Some(Ok(log)) => tx.send(Event::Update(UpdateEvent::Log(log)))?,
-            Some(Err(e)) => warn!("{:?}", e),
-            None => warn!("No more traffic"),
+            Some(Err(e)) => return Err(api_error("/logs", e)),
+            None => return Err(TuiError::ApiStreamEnded("/logs")),
         }
     }
 }
@@ -150,15 +180,72 @@ fn action_job(
                 }
 
                 tx.send(Event::Update(UpdateEvent::ProxyTestLatencyDone))?;
-                tx.send(Event::Update(UpdateEvent::Proxies(clash.get_proxies()?)))?;
+                tx.send(Event::Update(UpdateEvent::Proxies(api_result(
+                    "/proxies",
+                    clash.get_proxies(),
+                )?)))?;
             }
             Action::ApplySelection { group, proxy } => {
-                let _ = clash
-                    .set_proxygroup_selected(&group, &proxy)
-                    .map_err(|e| warn!("{:?}", e));
-                tx.send(Event::Update(UpdateEvent::Proxies(clash.get_proxies()?)))?;
+                api_result(
+                    "/proxies/{group}",
+                    clash.set_proxygroup_selected(&group, &proxy),
+                )?;
+                tx.send(Event::Update(UpdateEvent::Proxies(api_result(
+                    "/proxies",
+                    clash.get_proxies(),
+                )?)))?;
             }
         }
     }
     Ok(())
+}
+
+fn api_result<T>(endpoint: &'static str, result: clashctl_core::Result<T>) -> TuiResult<T> {
+    result.map_err(|source| api_error(endpoint, source))
+}
+
+fn api_error(endpoint: &'static str, source: clashctl_core::Error) -> TuiError {
+    TuiError::ApiEndpoint { endpoint, source }
+}
+
+fn report_job_error(tx: &Sender<Event>, result: TuiResult<()>) -> TuiResult<()> {
+    if let Err(error) = result {
+        let _ = tx.send(Event::Failure(error.to_string()));
+        return Err(error);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc::channel;
+
+    use super::*;
+
+    #[test]
+    fn background_errors_are_forwarded_to_the_ui() {
+        let (tx, rx) = channel();
+
+        let result = report_job_error(&tx, Err(TuiError::TuiBackendErr));
+
+        assert!(result.is_err());
+        match rx.recv().unwrap() {
+            Event::Failure(message) => assert_eq!(message, "TUI backend error"),
+            event => panic!("expected failure event, got {event:?}"),
+        }
+    }
+
+    #[test]
+    fn api_errors_include_the_endpoint() {
+        let error = api_result::<()>(
+            "/connections",
+            Err(clashctl_core::Error::other("invalid payload".to_owned())),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Clash/Mihomo API `/connections` failed: Other errors (invalid payload)"
+        );
+    }
 }

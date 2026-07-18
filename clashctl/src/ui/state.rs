@@ -63,6 +63,7 @@ impl<'a> TuiStates<'a> {
                 self.should_quit = true;
                 Ok(None)
             }
+            Event::Failure(message) => Err(crate::ui::TuiError::BackgroundError(message)),
             Event::Input(event) => self.handle_input(event),
             Event::Update(update) => self.handle_update(update),
             _ => Ok(None),

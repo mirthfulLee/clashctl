@@ -18,6 +18,13 @@ impl<'a> ProxyTreeWidget<'a> {
 
 impl<'a> Widget for ProxyTreeWidget<'a> {
     fn render(self, area: tui::layout::Rect, buf: &mut tui::buffer::Buffer) {
+        let block = if self.state.expanded {
+            get_focused_block("Proxies")
+        } else {
+            get_block("Proxies")
+        };
+        let inner = block.inner(area);
+
         let cursor = &self.state.cursor;
         let skip = if self.state.expanded {
             *cursor
@@ -32,7 +39,7 @@ impl<'a> Widget for ProxyTreeWidget<'a> {
             .enumerate()
             .map(|(i, x)| {
                 x.get_widget(
-                    area.width as usize,
+                    inner.width as usize,
                     match (self.state.expanded, *cursor == i + skip) {
                         (true, true) => ProxyGroupFocusStatus::Expanded,
                         (false, true) => ProxyGroupFocusStatus::Focused,
@@ -46,16 +53,8 @@ impl<'a> Widget for ProxyTreeWidget<'a> {
             })
             .unwrap_or_default()
             .into_iter()
-            .take(area.height as usize)
+            .take(inner.height as usize)
             .collect::<Vec<_>>();
-
-        let block = if self.state.expanded {
-            get_focused_block("Proxies")
-        } else {
-            get_block("Proxies")
-        };
-
-        let inner = block.inner(area);
 
         block.render(area, buf);
 
