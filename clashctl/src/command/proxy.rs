@@ -168,4 +168,8 @@ fn test_proxy_type() {
 
     let anytls = "anytls".parse().unwrap();
     assert_eq!(ProxyType::AnyTLS, anytls);
+
+    let vless = "vless".parse().unwrap();
+    assert_eq!(ProxyType::Vless, vless);
+    assert_eq!(vless.to_string(), "Vless");
 }
