@@ -41,12 +41,12 @@ fn test_proxy() {
 }
 
 #[test]
-fn test_proxy_delay() {
+fn test_group_delay() {
     let clash = init();
     let proxies = clash.get_proxies().unwrap();
-    let (proxy, _) = proxies.iter().find(|x| x.1.proxy_type.is_normal()).unwrap();
+    let (group, _) = proxies.groups().next().unwrap();
     clash
-        .get_proxy_delay(proxy, "https://static.miao.dev/generate_204", 10000)
+        .get_group_delay(group, "https://static.miao.dev/generate_204", 10000)
         .unwrap();
 }
 

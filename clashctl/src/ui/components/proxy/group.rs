@@ -29,6 +29,10 @@ pub enum ProxyGroupFocusStatus {
 }
 
 impl<'a> ProxyGroup<'a> {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     pub fn proxy_type(&self) -> ProxyType {
         self.proxy_type
     }

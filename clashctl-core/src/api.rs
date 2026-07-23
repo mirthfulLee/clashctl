@@ -11,8 +11,11 @@ use ureq::{Agent, Request};
 use url::Url;
 
 use crate::{
-    model::{Config, Connections, Delay, Log, Proxies, Proxy, Rules, Traffic, Version},
     Error, Result,
+    model::{
+        Config, Connections, Delay, GroupDelay, Log, Proxies, Proxy, ProxyProviders, Rules,
+        Traffic, Version,
+    },
 };
 
 trait Convert<T: DeserializeOwned> {
@@ -194,6 +197,21 @@ impl Clash {
         self.oneshot_req(endpoint, "GET").and_then(Convert::convert)
     }
 
+    fn get_with_timeout<T: DeserializeOwned>(
+        &self,
+        endpoint: &str,
+        timeout: Duration,
+    ) -> Result<T> {
+        let resp = self
+            .build_request(endpoint, "GET")?
+            .timeout(timeout)
+            .call()?;
+        let text = resp
+            .into_string()
+            .map_err(|_| Error::bad_response_encoding())?;
+        text.convert()
+    }
+
     /// Helper function for method `DELETE`
     pub fn delete(&self, endpoint: &str) -> Result<()> {
         self.oneshot_req(endpoint, "DELETE").map(|_| ())
@@ -230,7 +248,28 @@ impl Clash {
 
     /// Get proxies information
     pub fn get_proxies(&self) -> Result<Proxies> {
-        self.get("proxies")
+        let mut proxies: Proxies = self.get("proxies")?;
+
+        // Mihomo keeps proxy-provider nodes out of `/proxies` in some
+        // configurations. Fetch provider details only when a group references
+        // nodes missing from the main response.
+        if proxies.has_missing_group_members() {
+            match self.get_proxy_providers() {
+                Ok(providers) => {
+                    proxies.merge_providers(providers);
+                }
+                Err(error) => {
+                    debug!("Unable to supplement proxies from providers: {error}");
+                }
+            }
+        }
+
+        Ok(proxies)
+    }
+
+    /// Get proxy-provider information
+    pub fn get_proxy_providers(&self) -> Result<ProxyProviders> {
+        self.get("providers/proxies")
     }
 
     /// Get rules information
@@ -286,10 +325,25 @@ impl Clash {
     pub fn get_proxy_delay(&self, proxy: &str, test_url: &str, timeout: u64) -> Result<Delay> {
         use urlencoding::encode as e;
         let (proxy, test_url) = (e(proxy), e(test_url));
-        self.get(&format!(
+        let endpoint = format!(
             "proxies/{}/delay?url={}&timeout={}",
             proxy, test_url, timeout
-        ))
+        );
+        self.get_with_timeout(
+            &endpoint,
+            Duration::from_millis(timeout).saturating_add(Duration::from_secs(1)),
+        )
+    }
+
+    /// Get delay test information for every proxy in a group
+    pub fn get_group_delay(&self, group: &str, test_url: &str, timeout: u64) -> Result<GroupDelay> {
+        use urlencoding::encode as e;
+        let (group, test_url) = (e(group), e(test_url));
+        let endpoint = format!("group/{}/delay?url={}&timeout={}", group, test_url, timeout);
+        self.get_with_timeout(
+            &endpoint,
+            Duration::from_millis(timeout).saturating_add(Duration::from_secs(1)),
+        )
     }
 
     /// Select specific proxy

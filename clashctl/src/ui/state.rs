@@ -4,12 +4,12 @@ use clashctl_core::model::{ConnectionWithSpeed, Log, Rule, Traffic, Version};
 use smart_default::SmartDefault;
 
 use crate::{
+    Action, ConfigState, Event, InputEvent, UpdateEvent,
     interactive::{Noop, RuleSort},
     ui::{
-        components::{MovableListManage, MovableListManager, MovableListState, ProxyTree},
         TuiResult,
+        components::{MovableListManage, MovableListManager, MovableListState, ProxyTree},
     },
-    Action, ConfigState, Event, InputEvent, UpdateEvent,
 };
 
 pub(crate) type LogListState<'a> = MovableListState<'a, Log, Noop>;
@@ -161,14 +161,7 @@ impl<'a> TuiStates<'a> {
             InputEvent::TestLatency => {
                 if self.title() == "Proxies" && !self.proxy_tree.is_testing() {
                     self.proxy_tree.start_testing();
-                    let group = self.proxy_tree.current_group();
-                    let proxies = group
-                        .members()
-                        .iter()
-                        .filter(|x| x.proxy_type().is_normal())
-                        .map(|x| x.name().into())
-                        .collect();
-                    return Ok(Some(Action::TestLatency { proxies }));
+                    return Ok(Some(latency_test_action(&self.proxy_tree)));
                 }
             }
             InputEvent::NextSort => {
@@ -192,5 +185,54 @@ impl<'a> TuiStates<'a> {
 
     fn drop_events(&mut self, num: usize) -> impl Iterator<Item = Event> + '_ {
         self.debug_state.drain(..num)
+    }
+}
+
+fn latency_test_action(proxy_tree: &ProxyTree<'_>) -> Action {
+    let group = proxy_tree.current_group();
+    let proxies = group
+        .members()
+        .iter()
+        .filter(|proxy| proxy.proxy_type().is_testable())
+        .map(|proxy| proxy.name().to_owned())
+        .collect();
+
+    Action::TestLatency {
+        group: group.name().to_owned(),
+        proxies,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use clashctl_core::model::{Proxies, Proxy, ProxyType};
+
+    use super::*;
+
+    #[test]
+    fn latency_test_action_includes_group_and_unresolved_members() {
+        let proxies = Proxies {
+            proxies: HashMap::from([(
+                "group".to_owned(),
+                Proxy {
+                    proxy_type: ProxyType::Selector,
+                    history: vec![],
+                    udp: None,
+                    all: Some(vec!["provider-node".to_owned()]),
+                    now: Some("provider-node".to_owned()),
+                },
+            )]),
+        };
+        let tree = ProxyTree::from(proxies);
+
+        match latency_test_action(&tree) {
+            Action::TestLatency { group, proxies } => {
+                assert_eq!(group, "group");
+                assert_eq!(proxies, vec!["provider-node"]);
+            }
+            action => panic!("expected latency test action, got {action:?}"),
+        }
     }
 }

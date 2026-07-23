@@ -1,20 +1,20 @@
 use std::{
     sync::mpsc::{Receiver, Sender},
-    thread::{scope, JoinHandle},
+    thread::{JoinHandle, scope},
     time::Duration,
 };
 
 use clashctl_core::Clash;
 use crossterm::event::Event as CrossTermEvent;
-use log::warn;
+use log::{debug, warn};
 use rayon::prelude::*;
 
 use crate::{
     interactive::Flags,
     ui::{
+        Action, TuiError, TuiOpt, TuiResult,
         event::{Event, UpdateEvent},
         utils::{Interval, Pulse},
-        Action, TuiError, TuiOpt, TuiResult,
     },
 };
 
@@ -155,15 +155,29 @@ fn action_job(
     while let Ok(action) = rx.recv() {
         tx.send(Event::Action(action.clone()))?;
         match action {
-            Action::TestLatency { proxies } => {
-                let result = proxies
-                    .par_iter()
-                    .filter_map(|proxy| {
-                        clash
-                            .get_proxy_delay(proxy, flags.test_url.as_str(), flags.timeout)
-                            .err()
-                    })
-                    .collect::<Vec<_>>();
+            Action::TestLatency { group, proxies } => {
+                let result =
+                    match clash.get_group_delay(&group, flags.test_url.as_str(), flags.timeout) {
+                        Ok(_) => Vec::new(),
+                        Err(error) => {
+                            debug!(
+                                "Group latency test unavailable ({error}); falling back to \
+                                 individual proxies"
+                            );
+                            proxies
+                                .par_iter()
+                                .filter_map(|proxy| {
+                                    clash
+                                        .get_proxy_delay(
+                                            proxy,
+                                            flags.test_url.as_str(),
+                                            flags.timeout,
+                                        )
+                                        .err()
+                                })
+                                .collect::<Vec<_>>()
+                        }
+                    };
 
                 let count = result.len();
 

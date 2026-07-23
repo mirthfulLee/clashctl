@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-use std::ops::Deref;
+use std::{collections::HashMap, ops::Deref};
 
 use serde::{Deserialize, Serialize};
 
@@ -9,6 +8,8 @@ use super::TimeType;
 pub struct Proxies {
     pub proxies: HashMap<String, Proxy>,
 }
+
+pub type GroupDelay = HashMap<String, u64>;
 
 impl Proxies {
     pub fn normal(&self) -> impl Iterator<Item = (&String, &Proxy)> {
@@ -26,10 +27,27 @@ impl Proxies {
     pub fn built_ins(&self) -> impl Iterator<Item = (&String, &Proxy)> {
         self.iter().filter(|(_, x)| x.proxy_type.is_built_in())
     }
+
+    pub fn has_missing_group_members(&self) -> bool {
+        self.groups()
+            .filter_map(|(_, group)| group.all.as_ref())
+            .flatten()
+            .any(|name| !self.contains_key(name))
+    }
+
+    pub fn merge_providers(&mut self, providers: ProxyProviders) -> &mut Self {
+        for provider in providers.providers.into_values() {
+            for NamedProxy { name, proxy } in provider.proxies {
+                self.proxies.entry(name).or_insert(proxy);
+            }
+        }
+        self
+    }
 }
 
 impl Deref for Proxies {
     type Target = HashMap<String, Proxy>;
+
     fn deref(&self) -> &Self::Target {
         &self.proxies
     }
@@ -45,6 +63,24 @@ pub struct Proxy {
     // Only present in ProxyGroups
     pub all: Option<Vec<String>>,
     pub now: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProxyProviders {
+    pub providers: HashMap<String, ProxyProvider>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProxyProvider {
+    #[serde(default)]
+    pub proxies: Vec<NamedProxy>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct NamedProxy {
+    pub name: String,
+    #[serde(flatten)]
+    pub proxy: Proxy,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -161,6 +197,10 @@ impl ProxyType {
                 | ProxyType::OpenVPN
                 | ProxyType::GostRelay
         )
+    }
+
+    pub fn is_testable(&self) -> bool {
+        self.is_normal() || matches!(self, ProxyType::Unknown)
     }
 }
 
@@ -300,4 +340,61 @@ fn test_proxies() {
         proxies.normal().map(|x| x.0).collect::<Vec<_>>(),
         vec!["test_c"]
     );
+}
+
+#[test]
+fn test_provider_proxies_fill_missing_group_members() {
+    let mut proxies = serde_json::from_str::<Proxies>(
+        r#"{
+            "proxies": {
+                "group": {
+                    "type": "Selector",
+                    "history": [],
+                    "udp": true,
+                    "all": ["provider-node", "DIRECT"],
+                    "now": "provider-node"
+                },
+                "DIRECT": {
+                    "type": "Direct",
+                    "history": [],
+                    "udp": true
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    let providers = serde_json::from_str::<ProxyProviders>(
+        r#"{
+            "providers": {
+                "subscription": {
+                    "name": "subscription",
+                    "type": "Proxy",
+                    "proxies": [{
+                        "name": "provider-node",
+                        "type": "Vless",
+                        "history": [],
+                        "udp": true
+                    }]
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    assert!(proxies.has_missing_group_members());
+    proxies.merge_providers(providers);
+
+    assert!(!proxies.has_missing_group_members());
+    assert_eq!(
+        proxies.get("provider-node").map(|proxy| proxy.proxy_type),
+        Some(ProxyType::Vless)
+    );
+}
+
+#[test]
+fn unknown_proxy_types_remain_testable() {
+    assert!(ProxyType::Unknown.is_testable());
+    assert!(ProxyType::Trojan.is_testable());
+    assert!(!ProxyType::Selector.is_testable());
+    assert!(!ProxyType::Direct.is_testable());
 }
